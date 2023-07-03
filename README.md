@@ -1,6 +1,6 @@
 # NNR-TNR
 
-This is a sample python code of nuclear norm regularized (NNR) loop optimization for tensor network renormalization (TNR) (arXiv:2306.17479). 
+This is a sample python code of nuclear norm regularized (NNR) loop optimization for tensor network renormalization (TNR) in arXiv:2306.17479. 
 
 # Requirements
 - Python 3
