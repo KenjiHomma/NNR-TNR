@@ -3,11 +3,12 @@ from ncon import ncon
 import scipy.linalg as scl
 import scipy.integrate as integrate
 
-from NNR_loop_optimization import optimize_aug
+from NNR_loop_optimization_modified import optimize_aug
 
 from plot_spectrum import plot_spectrum
 from plot_CFT_data import plot_CFT_data
-
+from plot_CFT_error import plot_CFT_error
+import time
 def Exact_Free_energy(temperature):
         exact_sol = 0
         def funct_to_integrate(theta1,theta2,beta):
@@ -41,6 +42,30 @@ def normalize_T(Ts,g):
     for i in range(4):
         Ts[i] = Ts[i]/(g**(1/4))
     return Ts
+def Normalize_Ss(Ts,X_tr,X_tr_new):
+    
+    size = len(X_tr)
+    XX_dagger = [0 for x in range(4)]
+    for i in range(4):
+        M = ncon([np.conj(Ts[i]),Ts[i]],[[-1,2,3,-3],[-2,2,3,-4]])
+        XX_dagger[i]= M.reshape(M.shape[0]*M.shape[1],M.shape[2]*M.shape[3])
+    gamma = XX_dagger[0]
+    for i in range(1,4):
+        gamma = gamma@XX_dagger[i]
+    gamma = np.trace(gamma)
+
+    for i in range(size):
+        X_tr[i] = X_tr[i]/(gamma**(1/(2*size)))
+        X_tr_new[i]= X_tr_new[i]/(gamma**(1/(2*size)))
+    return X_tr,X_tr_new,gamma
+
+def Normalize_Back_Ss(X_tr,gamma):
+    
+    size = len(X_tr)
+    for i in range(size):
+        X_tr[i] = X_tr[i]*(gamma**(1/(2*size)))
+    return X_tr
+
 def LN_renormalization(Ts):
     """
     Renormalizing coarse-grained tensors into new one tensors in square lattice using Lavin-Nave TRG method.
@@ -131,28 +156,35 @@ def NNM_TNR(Ts, OPT_EPS, loop_iter,RG_I,chi,temp,K,rho,solver_eps):
     c_list = []
 
     CFT_data_list=[]
+    CFT_data_error = []
 
     C = 0
     N = 1
     Nplus = 2
+    spectrtum_old = 0
 
     print("\n ===============hyperparameter  ===============\n")
     print("K:", K)
     print("rho:", rho)
     print("chi:", chi)
     print("\n =============== NNR-TNR starts ===============\n")
+    start = time.time()
     for i in range(RG_I):
         print("\n//----------- Renormalization step:   "+ str(i)+ " -----------\n")
+
 
         eight_tensors =  LN_TRG_decomp(Ts,chi)
  
         # ----------- NNR loop-optimization ----------- .  
         eight_tensors_p = LN_TRG_decomp(Ts,chi**2)
+
+        eight_tensors_p,eight_tensors, G_norm= Normalize_Ss(Ts,eight_tensors_p,eight_tensors)
         eight_tensors = optimize_aug(eight_tensors,eight_tensors_p,loop_iter,K,rho,solver_eps)
+        eight_tensors= Normalize_Back_Ss(eight_tensors,G_norm)
         # ----------- NNR loop-optimization ends ----------- .  
 
         Ts = LN_renormalization(eight_tensors)
-
+        
         G0 = G
         G,central_c ,scaling_dims = transfer_matrix(Ts)
         Ts = normalize_T(Ts,G)
@@ -180,10 +212,11 @@ def NNM_TNR(Ts, OPT_EPS, loop_iter,RG_I,chi,temp,K,rho,solver_eps):
         if i > 2:
             c_list.append(central_c)
             CFT_data_list.append(np.real(scaling_dims).tolist())
+ 
             spectrum_list.append(list(spectrum))
-
-        spectrum_old = spectrum
-
+           
+            error_cft = [abs((central_c -1/2)/(1/2)),abs((scaling_dims[0]-1/8)/(1/8)),abs((scaling_dims[1]-1)/(1))]
+            CFT_data_error.append(error_cft)
 
 
 
@@ -191,14 +224,15 @@ def NNM_TNR(Ts, OPT_EPS, loop_iter,RG_I,chi,temp,K,rho,solver_eps):
     print("\n *  central charge vs RG step:       " +str(c_list)+"\n")
 
     CFT_data_list = np.array(CFT_data_list)
-
     ## Plot the singular value and scaling dimension spectrum (Fig.6 and Fig.7 in our paper)
     # Please comment out if not necessary.
 
-    label = ("NNR_chi="+str(chi)+"K="+str(K)+"rho="+str(rho)+"solver_eps="+str(solver_eps)+"loop_iter"+str(loop_iter)+"aug_lag"+"temp="+str(temp/(2/np.log(1+np.sqrt(2)))))
+    label = ("NNR_spec_chi="+str(chi)+"K="+str(K)+"rho="+str(rho)+"solver_eps="+str(solver_eps)+"loop_iter"+str(loop_iter)+"aug_lag"+"temp="+str(temp/(2/np.log(1+np.sqrt(2)))))
     plot_spectrum(spectrum_list,chi,label)
+    label = ("NNR_CFT_chi="+str(chi)+"K="+str(K)+"rho="+str(rho)+"solver_eps="+str(solver_eps)+"loop_iter"+str(loop_iter)+"aug_lag"+"temp="+str(temp/(2/np.log(1+np.sqrt(2)))))
     plot_CFT_data(c_list, CFT_data_list,chi,label)
-
+    label = ("NNR_CFT_error_chi="+str(chi)+"K="+str(K)+"rho="+str(rho)+"solver_eps="+str(solver_eps)+"loop_iter"+str(loop_iter)+"aug_lag"+"temp="+str(temp/(2/np.log(1+np.sqrt(2)))))
+    plot_CFT_error(CFT_data_error,chi,label)
 
     return Ts
 import argparse
@@ -228,26 +262,30 @@ parser = argparse.ArgumentParser(
         description="Simulation of 2D classical Ising model by NNR-TNR",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-parser.add_argument("chi", type=int,nargs="?", help="Bond dimension",default=16)
+parser.add_argument("chi", type=int,nargs="?", help="Bond dimension",default=8)
 parser.add_argument("temp_ratio", type=float,nargs="?",help="temp ratio",default=1)
-parser.add_argument("RG_step", type=int,nargs="?",help="RG_step",default=51)
+parser.add_argument("RG_step", type=int,nargs="?",help="RG_step",default=61)
 
-parser.add_argument("xi_hyper", type=float,nargs="?",help="xi_hyper",default= 1E-6)
-parser.add_argument("rho_hyper", type=float,nargs="?",help="rho_hyper",default= 0.9)
+parser.add_argument("xi_hyper", type=int,nargs="?",help="xi_hyper",default= 0)
+parser.add_argument("rho_hyper", type=int,nargs="?",help="rho_hyper",default= 0)
 
 parser.add_argument("OPT_EPS", type=float,nargs="?",help="OPT_EPS ",default= 1E-15)
-parser.add_argument("OPT_MAX_I", type=int,nargs="?",help="OPT_MAX_I",default=30)
-parser.add_argument("solver_eps", type=float,nargs="?",help="OPT_MAX_I",default= 1E-12)
+parser.add_argument("OPT_MAX_I", type=int,nargs="?",help="OPT_MAX_I",default=0)
+parser.add_argument("solver_eps", type=float,nargs="?",help="OPT_MAX_I",default= 1E-15)
 
+
+xi_hyper_list = [4e-6]
+rho_hyper_list = [0.85]
+iteration_list = [30]
 
 args = parser.parse_args()
 chi = args.chi
 temp_ratio = args.temp_ratio
 RG_step = args.RG_step
 OPT_EPS = args.OPT_EPS
-OPT_MAX_I = args.OPT_MAX_I
-xi = args.xi_hyper
-rho = args.rho_hyper
+OPT_MAX_I = iteration_list[args.OPT_MAX_I]
+xi = xi_hyper_list[args.xi_hyper]
+rho = rho_hyper_list[args.rho_hyper]
 solver_eps =  args.solver_eps
 temp =  temp_ratio*2/np.log(1+np.sqrt(2))
 
